@@ -1,215 +1,215 @@
-# Polymarket BTC 5-Minute Market Data Pipeline
+# Polymarket BTC 5 分钟预测市场数据采集工具
 
-A comprehensive data collection toolkit for [Polymarket](https://polymarket.com) **BTC Up/Down 5-Minute** prediction markets. This project provides two independent data collection systems:
+一套完整的 [Polymarket](https://polymarket.com) **BTC Up/Down 5 分钟** 预测市场数据采集工具包。本项目提供两个独立的数据采集系统：
 
-1. **Realized Trade Pipeline** — Batch backfill of historical executed trades from closed markets
-2. **Real-Time Order Book Recorder** — Live WebSocket-based L2 order book streaming from active markets
+1. **已成交交易管道 (Realized Trade Pipeline)** — 批量回填已关闭市场的历史成交数据
+2. **实时订单簿录制器 (Order Book Recorder)** — 基于 WebSocket 的 L2 订单簿实时流式采集
 
-Together, they capture the complete trading lifecycle of BTC 5-minute prediction markets.
-
----
-
-## Table of Contents
-
-- [Data Definitions](#data-definitions)
-  - [Realized Trades](#realized-trades)
-  - [Full Order Book (L2)](#full-order-book-l2)
-  - [Key Differences](#key-differences)
-- [Architecture Overview](#architecture-overview)
-- [Quick Start](#quick-start)
-- [1. Realized Trade Pipeline](#1-realized-trade-pipeline)
-  - [How It Works](#how-it-works)
-  - [CLI Usage](#cli-usage)
-  - [Output Files](#output-files)
-  - [CSV Schemas](#csv-schemas-trades)
-- [2. Real-Time Order Book Recorder](#2-real-time-order-book-recorder)
-  - [How It Works](#how-it-works-1)
-  - [CLI Usage](#cli-usage-1)
-  - [Output Files](#output-files-1)
-  - [CSV Schemas](#csv-schemas-order-book)
-- [3. On-Chain Trade Verification](#3-on-chain-trade-verification)
-- [API Sources](#api-sources)
-- [Project Structure](#project-structure)
-- [Requirements](#requirements)
+两者结合，可以覆盖 BTC 5 分钟预测市场的完整交易生命周期。
 
 ---
 
-## Data Definitions
+## 目录
 
-### Realized Trades
-
-**Definition:** Realized trades are **executed (filled) transactions** — orders that have been matched and settled on the Polymarket CLOB (Central Limit Order Book). Each trade record represents a completed exchange between a buyer and seller at a specific price and size.
-
-**Data Scope:**
-- **Time range:** Historical closed markets only (markets that have already resolved)
-- **Source API:** `Data API /trades` (off-chain trade history) and optionally Polygon on-chain `OrderFilled` logs for strict verification
-- **What it captures:**
-  - Every executed trade: price, size, notional value (`price × size`), side (BUY/SELL), outcome (Up/Down)
-  - Transaction metadata: timestamp (unix seconds), proxy wallet address, transaction hash
-  - Market context: condition ID, event ID, market slug, window start timestamp
-- **What it does NOT capture:**
-  - Unexecuted (resting) limit orders
-  - Order book depth or liquidity at any point in time
-  - Order cancellations or modifications
-  - Bid-ask spreads
-- **Limitations:**
-  - Data API `/trades` has an offset limit (~3000 trades per market). For high-volume markets, on-chain verification (`export_market_trades_chain.py`) provides complete coverage
-  - Only available for **closed** markets — the Data API returns trade history after market resolution
-
-### Full Order Book (L2)
-
-**Definition:** The L2 (Level 2) order book is an **aggregated depth snapshot** showing the total resting order size at each price level. "L2" means orders are grouped by price — you see "100 shares at $0.55" but NOT who placed those 100 shares or how many individual orders compose them (that would be L3).
-
-**Data Scope:**
-- **Time range:** From the moment the recorder starts running onwards (prospective only, no historical backfill possible)
-- **Source:** CLOB WebSocket `wss://ws-subscriptions-clob.polymarket.com/ws/market`
-- **What it captures (3 event streams):**
-  1. **Book Snapshots** (`book` events) — Complete L2 depth after each trade execution. Contains all bid and ask price levels with their aggregated sizes
-  2. **Price Changes** (`price_change` events) — Incremental L2 delta updates from order placements, cancellations, and partial fills. `size=0` means a price level was removed
-  3. **WebSocket Trades** (`last_trade_price` events) — Trade execution notifications received in real-time via WebSocket, with millisecond-precision receive timestamps
-- **What it does NOT capture:**
-  - Individual order IDs or L3 data (Polymarket public API does not expose this)
-  - Historical order book states before the recorder was started
-  - Order book of **closed** markets (Polymarket destroys the CLOB book once a market resolves; REST `/book` returns 404)
-- **Timestamp precision:** Millisecond-level. Each record includes:
-  - `server_ts_ms` — Server-side timestamp from Polymarket
-  - `receive_ts_ms` — Local receive timestamp (when the WebSocket message was processed)
-  - `receive_utc` — Human-readable ISO 8601 UTC timestamp
-
-### Key Differences
-
-| Aspect | Realized Trades | Order Book (L2) |
-|--------|----------------|-----------------|
-| **Data type** | Executed transactions | Resting order depth + deltas |
-| **Time direction** | Historical (backward-looking) | Real-time (forward-looking) |
-| **Market state** | Closed markets only | Active markets only |
-| **Collection method** | REST API batch polling | WebSocket streaming |
-| **Granularity** | Per-trade | Per-price-level, millisecond events |
-| **Completeness** | All trades (with on-chain fallback) | All events from recorder start |
-| **Shows liquidity?** | No (only what traded) | Yes (full bid/ask depth) |
-| **Shows spread?** | No | Yes (`best_bid`, `best_ask`) |
-
-> **Why can't we get historical order books?** Polymarket destroys the CLOB order book when a market closes and resolves. The REST endpoint `GET /book?token_id=...` returns HTTP 404 for closed markets. This is why the Order Book Recorder must run continuously to capture depth data while markets are still live.
+- [数据定义](#数据定义)
+  - [已成交交易 (Realized Trades)](#已成交交易-realized-trades)
+  - [完整订单簿 L2 (Full Order Book)](#完整订单簿-l2-full-order-book)
+  - [核心差异对比](#核心差异对比)
+- [架构概览](#架构概览)
+- [快速开始](#快速开始)
+- [一、已成交交易管道](#一已成交交易管道)
+  - [工作原理](#工作原理)
+  - [命令行用法](#命令行用法)
+  - [输出文件](#输出文件)
+  - [CSV 字段说明](#csv-字段说明交易)
+- [二、实时订单簿录制器](#二实时订单簿录制器)
+  - [工作原理](#工作原理-1)
+  - [命令行用法](#命令行用法-1)
+  - [输出文件](#输出文件-1)
+  - [CSV 字段说明](#csv-字段说明订单簿)
+- [三、链上交易验证](#三链上交易验证)
+- [API 数据源](#api-数据源)
+- [项目结构](#项目结构)
+- [环境要求](#环境要求)
 
 ---
 
-## Architecture Overview
+## 数据定义
+
+### 已成交交易 (Realized Trades)
+
+**定义：** 已成交交易是指**已经撮合成功并结算的交易记录** — 买卖双方在 Polymarket CLOB（中央限价订单簿）上以特定价格和数量完成的交易。每条记录代表一次真实发生的成交。
+
+**数据范畴：**
+- **时间范围：** 仅限已关闭（已结算）的历史市场
+- **数据来源：** `Data API /trades`（链下成交记录），以及可选的 Polygon 链上 `OrderFilled` 事件日志用于严格验证
+- **包含的数据：**
+  - 每笔已执行的交易：成交价格 (price)、成交数量 (size)、名义金额 (`price × size`)、方向 (BUY/SELL)、结果 (Up/Down)
+  - 交易元数据：时间戳（Unix 秒级）、代理钱包地址、Polygon 交易哈希
+  - 市场上下文：condition ID、event ID、市场 slug、5 分钟窗口起始时间戳
+- **不包含的数据：**
+  - 未成交的挂单（resting limit orders）
+  - 任何时间点的订单簿深度或流动性
+  - 订单的撤销或修改记录
+  - 买卖价差（bid-ask spread）
+- **限制：**
+  - Data API `/trades` 存在偏移量限制（每个市场约 3000 条）。对于高交易量市场，可使用链上验证脚本 (`export_market_trades_chain.py`) 获取完整数据
+  - 仅可获取**已关闭**市场的数据 — Data API 在市场结算后才提供完整成交历史
+
+### 完整订单簿 L2 (Full Order Book)
+
+**定义：** L2（Level 2）订单簿是**按价格聚合的深度快照**，显示每个价格档位上的总挂单量。"L2" 意味着订单按价格分组 — 你能看到"在 $0.55 价位有 100 股挂单"，但**看不到**这 100 股由多少个独立订单组成、分别是谁下的（那是 L3 数据）。
+
+**数据范畴：**
+- **时间范围：** 从录制器启动时刻开始，仅可向前采集（无法回填历史数据）
+- **数据来源：** CLOB WebSocket `wss://ws-subscriptions-clob.polymarket.com/ws/market`
+- **包含的数据（3 个事件流）：**
+  1. **订单簿快照** (`book` 事件) — 每次成交后推送的完整 L2 深度快照，包含所有买盘 (bid) 和卖盘 (ask) 价格档位及其聚合数量
+  2. **价格变动** (`price_change` 事件) — L2 增量更新，由挂单、撤单、部分成交触发。`size=0` 表示该价格档位已被完全移除
+  3. **实时成交** (`last_trade_price` 事件) — 通过 WebSocket 实时推送的成交通知，具有毫秒级接收时间戳
+- **不包含的数据：**
+  - 单个订单 ID 或 L3 级别数据（Polymarket 公开 API 不提供）
+  - 录制器启动之前的历史订单簿状态
+  - **已关闭**市场的订单簿（Polymarket 在市场结算后会销毁 CLOB 订单簿；REST `/book` 接口返回 404）
+- **时间戳精度：** 毫秒级。每条记录包含：
+  - `server_ts_ms` — Polymarket 服务端时间戳
+  - `receive_ts_ms` — 本地接收时间戳（WebSocket 消息被处理的时刻）
+  - `receive_utc` — 人类可读的 ISO 8601 UTC 时间戳
+
+### 核心差异对比
+
+| 维度 | 已成交交易 (Realized Trades) | 订单簿 L2 (Order Book) |
+|------|---------------------------|----------------------|
+| **数据类型** | 已执行的成交记录 | 挂单深度 + 增量变动 |
+| **时间方向** | 历史回溯（backward-looking） | 实时前瞻（forward-looking） |
+| **市场状态** | 仅已关闭市场 | 仅活跃市场 |
+| **采集方式** | REST API 批量拉取 | WebSocket 流式推送 |
+| **数据粒度** | 逐笔成交 | 逐价格档位，毫秒级事件 |
+| **数据完整性** | 全部成交（可链上兜底） | 录制器启动后的全部事件 |
+| **是否反映流动性？** | 否（只有已成交的） | 是（完整买卖盘深度） |
+| **是否反映价差？** | 否 | 是（`best_bid`、`best_ask`） |
+
+> **为什么无法获取历史订单簿？** Polymarket 在市场关闭并结算后会销毁 CLOB 订单簿。REST 接口 `GET /book?token_id=...` 对已关闭市场返回 HTTP 404。因此，订单簿录制器必须在市场仍然活跃时持续运行，才能捕获深度数据。
+
+---
+
+## 架构概览
 
 ```
-Polymarket APIs
-├── Gamma API ─────────── Market metadata (discovery, lifecycle)
-├── Data API ──────────── Historical trade records (closed markets)
-└── CLOB WebSocket ────── Real-time order book events (active markets)
+Polymarket API 层
+├── Gamma API ─────────── 市场元数据（发现、生命周期）
+├── Data API ──────────── 历史成交记录（已关闭市场）
+└── CLOB WebSocket ────── 实时订单簿事件（活跃市场）
 
-This Project
-├── run_pipeline.py ───── Batch pipeline: index markets → backfill trades → validate
-├── run_recorder.py ───── Daemon: discover markets → WS subscribe → stream to CSV
-└── export_market_trades_chain.py ── On-chain verification for single markets
+本项目
+├── run_pipeline.py ───── 批量管道：索引市场 → 回填成交 → 数据校验
+├── run_recorder.py ───── 守护进程：发现市场 → WS 订阅 → 流式写入 CSV
+└── export_market_trades_chain.py ── 单市场链上验证
 ```
 
-### Realized Trade Pipeline Architecture
+### 已成交交易管道架构
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                    run_pipeline.py (CLI)                          │
+│                    run_pipeline.py (CLI 入口)                     │
 └───────────────────────┬──────────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                 pipeline.py (4-Stage Pipeline)                    │
+│                pipeline.py (三阶段管道)                            │
 │                                                                   │
-│  Stage 1: Market Index ── Gamma /markets (tag_id=235, closed)    │
+│  阶段 1：市场索引 ── Gamma /markets (tag_id=235, closed)         │
 │      ↓                                                            │
-│  Stage 2: Trade Backfill ── Data /trades (per conditionId)       │
+│  阶段 2：成交回填 ── Data /trades (按 conditionId 分页)          │
 │      ↓                                                            │
-│  Stage 3: Validation ── Cross-check counts and consistency       │
+│  阶段 3：数据校验 ── 交叉验证计数与一致性                         │
 │                                                                   │
-│  Checkpoint: run_state.json (resume on crash)                    │
+│  断点续跑：run_state.json（崩溃后可恢复进度）                     │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### Order Book Recorder Architecture
+### 订单簿录制器架构
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                   run_recorder.py (CLI)                           │
+│                   run_recorder.py (CLI 入口)                      │
 └───────────────────────┬──────────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│               recorder.py (OrderBookRecorder)                     │
-│  Main thread: market discovery loop (Gamma API poll every 30s)   │
-│  WS thread:   receive events → dispatch → write CSV              │
+│              recorder.py (OrderBookRecorder)                      │
+│  主线程：市场发现循环（每 30 秒轮询 Gamma API）                   │
+│  WS 线程：接收事件 → 分发处理 → 写入 CSV                         │
 ├──────────────────────────────┬───────────────────────────────────┤
 │  market_tracker.py           │  ws_connection.py                 │
-│  • Gamma API active market   │  • WebSocket connection manager   │
-│    discovery & filtering     │  • Heartbeat (PING/PONG, 10s)    │
-│  • token_id ↔ market map     │  • Auto-reconnect (exp. backoff) │
-│  • Expiry-based lifecycle    │  • Subscribe / unsubscribe       │
+│  • Gamma API 活跃市场发现     │  • WebSocket 连接管理             │
+│    及过滤                    │  • 心跳保活（PING/PONG，10秒）    │
+│  • token_id ↔ 市场映射       │  • 断线自动重连（指数退避）       │
+│  • 基于到期时间的生命周期管理 │  • 动态订阅 / 退订               │
 └──────────────────────────────┴───────────────────────────────────┘
                         │
                         ▼
          output/orderbook/<market-slug>/
-           ├── book_snapshots_<slug>.csv
-           ├── price_changes_<slug>.csv
-           └── trades_<slug>.csv
+           ├── book_snapshots_<slug>.csv   （完整深度快照）
+           ├── price_changes_<slug>.csv    （L2 增量变动）
+           └── trades_<slug>.csv           （实时成交）
 ```
 
 ---
 
-## Quick Start
+## 快速开始
 
 ```bash
-# Clone
+# 克隆仓库
 git clone https://github.com/Oceanjackson1/Polymarket-BTC-5m-Scraper-API-Soluation.git
 cd Polymarket-BTC-5m-Scraper-API-Soluation
 
-# Setup
+# 配置环境
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Option A: Backfill historical trades (batch, runs to completion)
+# 方案 A：回填历史成交数据（批量运行，自动完成）
 python scripts/run_pipeline.py
 
-# Option B: Record live order books (daemon, runs until Ctrl-C)
+# 方案 B：录制实时订单簿（守护进程，Ctrl-C 停止）
 python scripts/run_recorder.py
 
-# Option C: Run both (in separate terminals)
+# 方案 C：两者同时运行（在不同终端窗口中）
 ```
 
 ---
 
-## 1. Realized Trade Pipeline
+## 一、已成交交易管道
 
-### How It Works
+### 工作原理
 
-The pipeline runs in 3 stages with checkpoint-based resume:
+管道分 3 个阶段运行，支持断点续跑：
 
-1. **Market Index** — Queries Gamma API for all closed BTC 5-minute markets (`tag_id=235`, `seriesSlug=btc-up-or-down-5m`). Paginates through all results and writes a market index CSV.
+1. **市场索引** — 查询 Gamma API 获取所有已关闭的 BTC 5 分钟市场（`tag_id=235`，`seriesSlug=btc-up-or-down-5m`），全量分页后写入市场索引 CSV。
 
-2. **Trade Backfill** — For each market in the index, fetches all executed trades from Data API `/trades` endpoint (paginated, `limit=1000`). Computes `notional = price × size` for each trade. Writes all trades to a single consolidated CSV.
+2. **成交回填** — 对索引中的每个市场，从 Data API `/trades` 接口分页拉取全部已执行的成交记录（`limit=1000`），计算每笔交易的名义金额 `notional = price × size`，写入统一的成交 CSV 文件。
 
-3. **Validation** — Cross-checks market count vs. trade count, generates a summary report.
+3. **数据校验** — 交叉验证市场数量与成交数量的一致性，生成校验报告。
 
-The pipeline saves progress to `run_state.json` after each page/market, allowing crash recovery via `--resume` (default behavior).
+管道在每一页/每个市场处理完后都会将进度保存到 `run_state.json`，崩溃后可通过 `--resume`（默认行为）恢复。
 
-### CLI Usage
+### 命令行用法
 
 ```bash
-# Default run (with auto-resume from last checkpoint)
+# 默认运行（自动从上次断点恢复）
 python scripts/run_pipeline.py
 
-# Fresh start (ignore existing checkpoint)
+# 从头开始（忽略已有断点）
 python scripts/run_pipeline.py --no-resume
 
-# Debug: only process first 20 markets
+# 调试模式：只处理前 20 个市场
 python scripts/run_pipeline.py --market-limit 20
 
-# Include markets with zero volume
+# 包含零交易量的市场
 python scripts/run_pipeline.py --include-zero-volume
 
-# All options
+# 完整参数示例
 python scripts/run_pipeline.py \
   --output-dir output \
   --market-limit 100 \
@@ -220,104 +220,104 @@ python scripts/run_pipeline.py \
   --log-level DEBUG
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--output-dir` | `output/` | Base output directory |
-| `--no-resume` | (resume) | Start fresh, ignore checkpoint |
-| `--market-limit` | None (all) | Max markets to process (for debugging) |
-| `--include-zero-volume` | False | Include markets with volume=0 |
-| `--request-delay` | 0.10s | Delay between API requests |
-| `--timeout-seconds` | 30 | HTTP request timeout |
-| `--max-retries` | 5 | Max retries per request (429/5xx auto-retry) |
-| `--log-level` | INFO | Logging level (DEBUG/INFO/WARNING/ERROR) |
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--output-dir` | `output/` | 输出基础目录 |
+| `--no-resume` | （默认续跑） | 从头开始，忽略断点文件 |
+| `--market-limit` | 无（全部） | 最大处理市场数（调试用） |
+| `--include-zero-volume` | False | 是否包含交易量为 0 的市场 |
+| `--request-delay` | 0.10 秒 | API 请求间隔 |
+| `--timeout-seconds` | 30 | HTTP 请求超时时间 |
+| `--max-retries` | 5 | 单次请求最大重试次数（429/5xx 自动重试） |
+| `--log-level` | INFO | 日志级别 (DEBUG/INFO/WARNING/ERROR) |
 
-### Output Files
+### 输出文件
 
 ```
 output/
 ├── indexes/
-│   └── markets_btc_up_or_down_5m.csv    # Market index (all discovered markets)
+│   └── markets_btc_up_or_down_5m.csv    # 市场索引（所有发现的市场）
 ├── trades/
-│   └── trades_btc_up_or_down_5m.csv     # Consolidated trade history
+│   └── trades_btc_up_or_down_5m.csv     # 合并的成交历史
 ├── reports/
-│   └── validation_summary.json           # Validation report
-└── run_state.json                         # Checkpoint for resume
+│   └── validation_summary.json           # 校验报告
+└── run_state.json                         # 断点续跑状态
 ```
 
-### CSV Schemas (Trades)
+### CSV 字段说明（交易）
 
-**`markets_btc_up_or_down_5m.csv`**
+**`markets_btc_up_or_down_5m.csv`** — 市场索引
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `market_id` | string | Gamma API market ID |
-| `event_id` | string | Associated event ID |
-| `condition_id` | string | CLOB condition ID (used for trade queries) |
-| `slug` | string | Market slug, e.g. `btc-updown-5m-1771211700` |
-| `clob_token_ids` | string | JSON array of CLOB token IDs (for order book subscription) |
-| `outcomes` | string | JSON array of outcome labels, e.g. `["Up","Down"]` |
-| `window_start_ts` | int | Unix timestamp of the 5-min window start |
-| `window_start_utc` | string | ISO 8601 UTC of window start |
-| `market_end_utc` | string | Market end date (ISO 8601) |
-| `volume` | float | Total market volume (USD) |
-| `market_url` | string | Polymarket URL (English) |
-| `market_url_zh` | string | Polymarket URL (Chinese) |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `market_id` | string | Gamma API 市场 ID |
+| `event_id` | string | 关联的事件 ID |
+| `condition_id` | string | CLOB condition ID（用于查询成交） |
+| `slug` | string | 市场标识符，如 `btc-updown-5m-1771211700` |
+| `clob_token_ids` | string | CLOB token ID 的 JSON 数组（用于订单簿订阅） |
+| `outcomes` | string | 结果标签的 JSON 数组，如 `["Up","Down"]` |
+| `window_start_ts` | int | 5 分钟窗口起始的 Unix 时间戳 |
+| `window_start_utc` | string | 窗口起始时间（ISO 8601 UTC） |
+| `market_end_utc` | string | 市场结束时间（ISO 8601） |
+| `volume` | float | 市场总交易量（USD） |
+| `market_url` | string | Polymarket 链接（英文） |
+| `market_url_zh` | string | Polymarket 链接（中文） |
 
-**`trades_btc_up_or_down_5m.csv`**
+**`trades_btc_up_or_down_5m.csv`** — 成交记录
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `market_slug` | string | Market slug |
-| `window_start_ts` | int | Window start unix timestamp |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `market_slug` | string | 市场标识符 |
+| `window_start_ts` | int | 窗口起始 Unix 时间戳 |
 | `condition_id` | string | CLOB condition ID |
-| `event_id` | string | Event ID |
-| `trade_timestamp` | int | Trade execution time (unix seconds) |
-| `trade_utc` | string | Trade time (ISO 8601 UTC) |
-| `price` | float | Execution price (0.0–1.0) |
-| `size` | float | Number of shares traded |
-| `notional` | float | `price × size` (USD value) |
-| `side` | string | `BUY` or `SELL` |
-| `outcome` | string | `Up` or `Down` |
-| `asset` | string | Token ID of the traded asset |
-| `proxy_wallet` | string | Trader's proxy wallet address |
-| `transaction_hash` | string | Polygon transaction hash |
-| `dedupe_key` | string | Composite key for deduplication |
+| `event_id` | string | 事件 ID |
+| `trade_timestamp` | int | 成交时间（Unix 秒级） |
+| `trade_utc` | string | 成交时间（ISO 8601 UTC） |
+| `price` | float | 成交价格（0.0–1.0） |
+| `size` | float | 成交数量（股） |
+| `notional` | float | 名义金额 `price × size`（USD） |
+| `side` | string | `BUY` 或 `SELL` |
+| `outcome` | string | `Up` 或 `Down` |
+| `asset` | string | 成交资产的 token ID |
+| `proxy_wallet` | string | 交易者的代理钱包地址 |
+| `transaction_hash` | string | Polygon 交易哈希 |
+| `dedupe_key` | string | 用于去重的复合键 |
 
 ---
 
-## 2. Real-Time Order Book Recorder
+## 二、实时订单簿录制器
 
-### How It Works
+### 工作原理
 
-The recorder runs as a **long-lived daemon process** that continuously:
+录制器以**长期运行的守护进程**方式持续工作：
 
-1. **Discovers markets** — Polls Gamma API every 30 seconds for active (open) BTC 5-minute markets
-2. **Subscribes via WebSocket** — Connects to `wss://ws-subscriptions-clob.polymarket.com/ws/market` and subscribes to all discovered token IDs
-3. **Streams events to CSV** — Receives 3 types of WebSocket events and writes them to per-market CSV files in real-time
-4. **Manages lifecycle** — Automatically subscribes to newly created markets and unsubscribes from expired ones (with 120s grace period)
+1. **发现市场** — 每 30 秒轮询 Gamma API，获取当前活跃（未关闭）的 BTC 5 分钟市场
+2. **WebSocket 订阅** — 连接到 `wss://ws-subscriptions-clob.polymarket.com/ws/market`，订阅所有已发现的 token ID
+3. **流式写入 CSV** — 接收 3 种 WebSocket 事件，实时写入每个市场对应的 CSV 文件
+4. **生命周期管理** — 自动订阅新创建的市场，自动退订已过期的市场（到期后保留 120 秒的宽限期）
 
-**Resilience features:**
-- **Auto-reconnect:** Exponential backoff (1s → 2s → 4s → ... → max 60s) on WebSocket disconnection
-- **Full re-subscribe on reconnect:** All active token IDs are re-subscribed after reconnection
-- **Append-mode CSV:** Files opened in append mode — safe to restart without losing prior data
-- **Heartbeat:** PING every 10 seconds to keep the connection alive
-- **Graceful shutdown:** `Ctrl-C` or `SIGTERM` flushes all CSV buffers before exit
+**容错特性：**
+- **断线自动重连：** 指数退避策略（1s → 2s → 4s → ... → 最大 60s）
+- **重连后全量重订阅：** 所有活跃 token ID 在重连后自动重新订阅
+- **追加模式 CSV：** 文件以 append 模式打开 — 重启后不会丢失之前的数据
+- **心跳保活：** 每 10 秒发送 PING 保持连接
+- **优雅关闭：** `Ctrl-C` 或 `SIGTERM` 会先刷新所有 CSV 缓冲区再退出
 
-### CLI Usage
+### 命令行用法
 
 ```bash
-# Default: record to output/orderbook/
+# 默认运行：录制到 output/orderbook/
 python scripts/run_recorder.py
 
-# Custom output directory
+# 自定义输出目录
 python scripts/run_recorder.py --output-dir /data/polymarket
 
-# Fine-tune timing
+# 调整时间参数
 python scripts/run_recorder.py \
   --poll-interval 15 \
   --grace-period 180
 
-# All options
+# 完整参数示例
 python scripts/run_recorder.py \
   --output-dir output \
   --poll-interval 30 \
@@ -327,92 +327,92 @@ python scripts/run_recorder.py \
   --log-level DEBUG
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--output-dir` | `output/` | Base output directory |
-| `--poll-interval` | 30.0s | Seconds between Gamma API discovery polls |
-| `--grace-period` | 120.0s | Seconds to keep recording after market endDate |
-| `--timeout-seconds` | 30 | HTTP timeout for Gamma API requests |
-| `--max-retries` | 5 | Max retries for Gamma API requests |
-| `--log-level` | INFO | Logging level |
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--output-dir` | `output/` | 输出基础目录 |
+| `--poll-interval` | 30.0 秒 | Gamma API 市场发现轮询间隔 |
+| `--grace-period` | 120.0 秒 | 市场到期后继续录制的宽限时间 |
+| `--timeout-seconds` | 30 | Gamma API 请求的 HTTP 超时 |
+| `--max-retries` | 5 | Gamma API 请求最大重试次数 |
+| `--log-level` | INFO | 日志级别 |
 
-### Output Files
+### 输出文件
 
-Each active market gets its own directory with 3 CSV files:
+每个活跃市场拥有独立的目录，包含 3 个 CSV 文件：
 
 ```
 output/orderbook/
 ├── btc-updown-5m-1771211700/
-│   ├── book_snapshots_btc-updown-5m-1771211700.csv
-│   ├── price_changes_btc-updown-5m-1771211700.csv
-│   └── trades_btc-updown-5m-1771211700.csv
+│   ├── book_snapshots_btc-updown-5m-1771211700.csv  （深度快照）
+│   ├── price_changes_btc-updown-5m-1771211700.csv   （增量变动）
+│   └── trades_btc-updown-5m-1771211700.csv          （实时成交）
 ├── btc-updown-5m-1771212000/
 │   ├── book_snapshots_btc-updown-5m-1771212000.csv
 │   ├── price_changes_btc-updown-5m-1771212000.csv
 │   └── trades_btc-updown-5m-1771212000.csv
-└── ... (one directory per active market)
+└── ...（每个活跃市场一个目录）
 ```
 
-### CSV Schemas (Order Book)
+### CSV 字段说明（订单簿）
 
-**`book_snapshots_<slug>.csv`** — Full L2 depth snapshots
+**`book_snapshots_<slug>.csv`** — 完整 L2 深度快照
 
-Triggered by `book` events (sent after each trade). Each snapshot expands into multiple rows (one per price level).
+由 `book` 事件触发（每次成交后推送）。每个快照展开为多行（每个价格档位一行）。
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `snapshot_seq` | int | Auto-incrementing snapshot counter (per market) |
-| `server_ts_ms` | int | Server timestamp (milliseconds since epoch) |
-| `receive_ts_ms` | int | Local receive timestamp (ms) |
-| `receive_utc` | string | Receive time (ISO 8601 UTC, ms precision) |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `snapshot_seq` | int | 自增快照序号（每市场独立） |
+| `server_ts_ms` | int | 服务端时间戳（毫秒） |
+| `receive_ts_ms` | int | 本地接收时间戳（毫秒） |
+| `receive_utc` | string | 接收时间（ISO 8601 UTC，毫秒精度） |
 | `asset_id` | string | CLOB token ID |
-| `outcome` | string | `Up` or `Down` |
-| `condition_id` | string | Market condition ID |
-| `side` | string | `bid` or `ask` |
-| `price` | string | Price level (0.0–1.0) |
-| `size` | string | Total resting size at this price level |
-| `level_index` | int | Position in the price ladder (0 = best) |
+| `outcome` | string | `Up` 或 `Down` |
+| `condition_id` | string | 市场 condition ID |
+| `side` | string | `bid`（买盘）或 `ask`（卖盘） |
+| `price` | string | 价格档位（0.0–1.0） |
+| `size` | string | 该价格档位的总挂单量 |
+| `level_index` | int | 价格阶梯中的位置（0 = 最优价） |
 
-**`price_changes_<slug>.csv`** — L2 incremental updates
+**`price_changes_<slug>.csv`** — L2 增量更新
 
-Triggered by `price_change` events (order place, cancel, or partial fill). Captures the delta — `size=0` means the price level was completely removed.
+由 `price_change` 事件触发（挂单、撤单或部分成交）。记录变动的增量 — `size=0` 表示该价格档位已被完全移除。
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `server_ts_ms` | int | Server timestamp (ms) |
-| `receive_ts_ms` | int | Local receive timestamp (ms) |
-| `receive_utc` | string | Receive time (ISO 8601 UTC) |
-| `condition_id` | string | Market condition ID |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `server_ts_ms` | int | 服务端时间戳（毫秒） |
+| `receive_ts_ms` | int | 本地接收时间戳（毫秒） |
+| `receive_utc` | string | 接收时间（ISO 8601 UTC） |
+| `condition_id` | string | 市场 condition ID |
 | `asset_id` | string | CLOB token ID |
-| `outcome` | string | `Up` or `Down` |
-| `side` | string | `BUY` or `SELL` |
-| `price` | string | Affected price level |
-| `size` | string | New total size at this level (`0` = removed) |
-| `best_bid` | string | Current best bid price after this change |
-| `best_ask` | string | Current best ask price after this change |
+| `outcome` | string | `Up` 或 `Down` |
+| `side` | string | `BUY` 或 `SELL` |
+| `price` | string | 受影响的价格档位 |
+| `size` | string | 该档位的新总量（`0` = 已移除） |
+| `best_bid` | string | 变动后的最优买价 |
+| `best_ask` | string | 变动后的最优卖价 |
 
-**`trades_<slug>.csv`** — Real-time trade executions
+**`trades_<slug>.csv`** — 实时成交
 
-Triggered by `last_trade_price` events. Similar data to the realized trade pipeline but with millisecond-precision timestamps and real-time delivery.
+由 `last_trade_price` 事件触发。与已成交交易管道的数据类似，但具有毫秒级时间戳且为实时推送。
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `server_ts_ms` | int | Server timestamp (ms) |
-| `receive_ts_ms` | int | Local receive timestamp (ms) |
-| `receive_utc` | string | Receive time (ISO 8601 UTC) |
-| `condition_id` | string | Market condition ID |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `server_ts_ms` | int | 服务端时间戳（毫秒） |
+| `receive_ts_ms` | int | 本地接收时间戳（毫秒） |
+| `receive_utc` | string | 接收时间（ISO 8601 UTC） |
+| `condition_id` | string | 市场 condition ID |
 | `asset_id` | string | CLOB token ID |
-| `outcome` | string | `Up` or `Down` |
-| `side` | string | `BUY` or `SELL` |
-| `price` | string | Execution price |
-| `size` | string | Trade size |
-| `fee_rate_bps` | string | Fee rate in basis points |
+| `outcome` | string | `Up` 或 `Down` |
+| `side` | string | `BUY` 或 `SELL` |
+| `price` | string | 成交价格 |
+| `size` | string | 成交数量 |
+| `fee_rate_bps` | string | 手续费率（基点） |
 
 ---
 
-## 3. On-Chain Trade Verification
+## 三、链上交易验证
 
-For high-volume markets where Data API `/trades` may hit the ~3000 offset limit, you can verify trades directly from the Polygon blockchain:
+当 Data API `/trades` 因偏移量限制（~3000 条）无法返回高交易量市场的全部成交时，可以直接从 Polygon 区块链验证：
 
 ```bash
 python scripts/export_market_trades_chain.py \
@@ -421,50 +421,50 @@ python scripts/export_market_trades_chain.py \
   --compare-csv output/trades/trades_btc-updown-5m-1771211700.csv
 ```
 
-This scans Polygon `OrderFilled` event logs for the specified market, providing a ground-truth trade record that bypasses any API pagination limits.
+该脚本扫描 Polygon 链上的 `OrderFilled` 事件日志，提供不受 API 分页限制的完整成交记录作为地面真值 (ground truth)。
 
-**Output:**
-- `output_strict/<slug>/strict_trades_<slug>.csv` — Complete on-chain trade history
-- `output_strict/<slug>/strict_validation_<slug>.json` — Validation report with coverage analysis
-
----
-
-## API Sources
-
-This project uses three Polymarket API endpoints:
-
-| API | Base URL | Purpose | Auth Required |
-|-----|----------|---------|---------------|
-| **Gamma API** | `https://gamma-api.polymarket.com` | Market metadata, discovery, lifecycle | No |
-| **Data API** | `https://data-api.polymarket.com` | Historical trade records | No |
-| **CLOB WebSocket** | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | Real-time order book events | No |
-
-**Gamma API** is used by both systems for market discovery. Key parameters:
-- `tag_id=235` — Bitcoin markets
-- `seriesSlug=btc-up-or-down-5m` — 5-minute series filter
-- `slug` pattern: `btc-updown-5m-<unix_timestamp>`
-
-**WebSocket Protocol:**
-- Subscribe: `{"assets_ids": [...], "type": "market", "custom_feature_enabled": true}`
-- Heartbeat: Send text `"PING"` every 10 seconds, receive `"PONG"`
-- Events arrive as JSON arrays; each element has an `event_type` field (`book`, `price_change`, `last_trade_price`)
+**输出：**
+- `output_strict/<slug>/strict_trades_<slug>.csv` — 完整的链上成交历史
+- `output_strict/<slug>/strict_validation_<slug>.json` — 校验报告（含覆盖率分析）
 
 ---
 
-## Project Structure
+## API 数据源
+
+本项目使用 Polymarket 的三个 API 端点：
+
+| API | 基础 URL | 用途 | 是否需要认证 |
+|-----|----------|------|-------------|
+| **Gamma API** | `https://gamma-api.polymarket.com` | 市场元数据、发现、生命周期 | 否 |
+| **Data API** | `https://data-api.polymarket.com` | 历史成交记录 | 否 |
+| **CLOB WebSocket** | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | 实时订单簿事件 | 否 |
+
+**Gamma API** 被两个系统共同使用，用于市场发现。关键参数：
+- `tag_id=235` — Bitcoin 相关市场
+- `seriesSlug=btc-up-or-down-5m` — 5 分钟系列过滤
+- `slug` 格式：`btc-updown-5m-<unix_timestamp>`
+
+**WebSocket 协议：**
+- 订阅消息：`{"assets_ids": [...], "type": "market", "custom_feature_enabled": true}`
+- 心跳保活：每 10 秒发送文本 `"PING"`，接收 `"PONG"`
+- 事件以 JSON 数组形式到达；每个元素包含 `event_type` 字段（`book`、`price_change`、`last_trade_price`）
+
+---
+
+## 项目结构
 
 ```
 ├── src/polymarket_btc5m/
-│   ├── __init__.py          # Package exports
-│   ├── client.py            # HTTP client with retry logic (Gamma + Data APIs)
-│   ├── pipeline.py          # Batch trade pipeline (stages 1-3)
-│   ├── market_tracker.py    # Active market discovery and lifecycle management
-│   ├── ws_connection.py     # WebSocket connection with heartbeat and reconnect
-│   └── recorder.py          # Order book recorder (event dispatch + CSV writing)
+│   ├── __init__.py          # 包导出
+│   ├── client.py            # HTTP 客户端，带重试逻辑（Gamma + Data API）
+│   ├── pipeline.py          # 批量成交管道（阶段 1-3）
+│   ├── market_tracker.py    # 活跃市场发现与生命周期管理
+│   ├── ws_connection.py     # WebSocket 连接管理（心跳 + 重连）
+│   └── recorder.py          # 订单簿录制器（事件分发 + CSV 写入）
 ├── scripts/
-│   ├── run_pipeline.py      # CLI: batch trade backfill
-│   ├── run_recorder.py      # CLI: real-time order book recording
-│   └── export_market_trades_chain.py  # CLI: on-chain trade verification
+│   ├── run_pipeline.py      # CLI 入口：批量成交回填
+│   ├── run_recorder.py      # CLI 入口：实时订单簿录制
+│   └── export_market_trades_chain.py  # CLI 入口：链上交易验证
 ├── requirements.txt
 ├── .gitignore
 └── README.md
@@ -472,11 +472,11 @@ This project uses three Polymarket API endpoints:
 
 ---
 
-## Requirements
+## 环境要求
 
 - Python 3.10+
-- Dependencies (auto-installed via `pip install -r requirements.txt`):
-  - `requests>=2.32.0` — HTTP client for REST APIs
-  - `websocket-client>=1.7.0` — WebSocket client for real-time streaming
+- 依赖项（通过 `pip install -r requirements.txt` 自动安装）：
+  - `requests>=2.32.0` — REST API 的 HTTP 客户端
+  - `websocket-client>=1.7.0` — 实时流式推送的 WebSocket 客户端
 
-No API keys required. All Polymarket endpoints used are public.
+无需 API 密钥。所有使用的 Polymarket 接口均为公开接口。
