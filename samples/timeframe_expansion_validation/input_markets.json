@@ -1,0 +1,92 @@
+[
+  {
+    "id": "1001",
+    "slug": "btc-updown-5m-1773024000",
+    "conditionId": "0xcond5m",
+    "clobTokenIds": "[\"50001\",\"50002\"]",
+    "outcomes": "[\"Up\",\"Down\"]",
+    "endDate": "2026-03-08T00:05:00Z",
+    "volume": "12345.67",
+    "events": [
+      {
+        "id": "evt5m",
+        "seriesSlug": "btc-up-or-down-5m"
+      }
+    ]
+  },
+  {
+    "id": "1002",
+    "slug": "btc-updown-15m-1773024300",
+    "conditionId": "0xcond15m",
+    "clobTokenIds": "[\"150001\",\"150002\"]",
+    "outcomes": "[\"Up\",\"Down\"]",
+    "endDate": "2026-03-08T00:15:00Z",
+    "volume": "23456.78",
+    "events": [
+      {
+        "id": "evt15m",
+        "seriesSlug": "btc-up-or-down-15m"
+      }
+    ]
+  },
+  {
+    "id": "1003",
+    "slug": "btc-updown-hourly-1773027600",
+    "conditionId": "0xcond1h",
+    "clobTokenIds": "[\"100001\",\"100002\"]",
+    "outcomes": "[\"Up\",\"Down\"]",
+    "endDate": "2026-03-08T01:00:00Z",
+    "volume": "34567.89",
+    "events": [
+      {
+        "id": "evt1h",
+        "seriesSlug": "btc-up-or-down-hourly"
+      }
+    ]
+  },
+  {
+    "id": "1004",
+    "slug": "btc-updown-4hour-1773038400",
+    "conditionId": "0xcond4h",
+    "clobTokenIds": "[\"400001\",\"400002\"]",
+    "outcomes": "[\"Up\",\"Down\"]",
+    "endDate": "2026-03-08T04:00:00Z",
+    "volume": "45678.90",
+    "events": [
+      {
+        "id": "evt4h",
+        "seriesSlug": "btc-up-or-down-4h"
+      }
+    ]
+  },
+  {
+    "id": "2001",
+    "slug": "btc-updown-15m-1773025200",
+    "conditionId": "0xinvalid_mismatch",
+    "clobTokenIds": "[\"1\",\"2\"]",
+    "outcomes": "[\"Up\",\"Down\"]",
+    "endDate": "2026-03-08T00:30:00Z",
+    "volume": "1",
+    "events": [
+      {
+        "id": "evt_bad",
+        "seriesSlug": "btc-up-or-down-5m"
+      }
+    ]
+  },
+  {
+    "id": "2002",
+    "slug": "eth-updown-5m-1773024000",
+    "conditionId": "0xinvalid_asset",
+    "clobTokenIds": "[\"1\",\"2\"]",
+    "outcomes": "[\"Up\",\"Down\"]",
+    "endDate": "2026-03-08T00:05:00Z",
+    "volume": "1",
+    "events": [
+      {
+        "id": "evt_bad2",
+        "seriesSlug": "eth-up-or-down-5m"
+      }
+    ]
+  }
+]

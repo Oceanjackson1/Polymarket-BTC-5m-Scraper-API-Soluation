@@ -36,7 +36,7 @@ class PolymarketApiClient:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         self.session.headers.update(
-            {"User-Agent": "polymarket-btc-5m-pipeline/1.0 (+https://polymarket.com)"}
+            {"User-Agent": "polymarket-btc-updown-pipeline/1.1 (+https://polymarket.com)"}
         )
 
     def get_gamma(self, path: str, params: dict[str, Any]) -> Any:

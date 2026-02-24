@@ -1,0 +1,39 @@
+{
+  "5m_only": {
+    "timeframes": [
+      "5m"
+    ],
+    "expected": {
+      "checkpoint": "run_state.json",
+      "markets_csv": "markets_btc_up_or_down_5m.csv",
+      "trades_csv": "trades_btc_up_or_down_5m.csv",
+      "validation_report": "validation_summary.json"
+    }
+  },
+  "all_timeframes": {
+    "timeframes": [
+      "5m",
+      "15m",
+      "1h",
+      "4h"
+    ],
+    "expected": {
+      "checkpoint": "run_state_all_timeframes.json",
+      "markets_csv": "markets_btc_up_or_down_all_timeframes.csv",
+      "trades_csv": "trades_btc_up_or_down_all_timeframes.csv",
+      "validation_report": "validation_summary_all_timeframes.json"
+    }
+  },
+  "subset_5m_15m": {
+    "timeframes": [
+      "5m",
+      "15m"
+    ],
+    "expected": {
+      "checkpoint": "run_state_5m_15m.json",
+      "markets_csv": "markets_btc_up_or_down_5m_15m.csv",
+      "trades_csv": "trades_btc_up_or_down_5m_15m.csv",
+      "validation_report": "validation_summary_5m_15m.json"
+    }
+  }
+}

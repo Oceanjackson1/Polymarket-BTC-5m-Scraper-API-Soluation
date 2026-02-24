@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -10,19 +9,21 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .client import PolymarketApiClient
+from .timeframes import LEGACY_5M_TIMEFRAMES, match_btc_updown_market, normalize_timeframes
 
-SERIES_SLUG = "btc-up-or-down-5m"
 BTC_TAG_ID = 235
-MARKET_SLUG_PATTERN = re.compile(r"^btc-updown-5m-(\d+)$")
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ActiveMarket:
-    """A currently live BTC 5-min market."""
+    """A currently live BTC up/down market."""
 
     slug: str
+    timeframe: str
+    event_id: str
+    window_start_ts: int
     condition_id: str
     token_ids: list[str]
     outcomes: list[str]
@@ -39,17 +40,19 @@ class ActiveMarket:
 
 
 class MarketTracker:
-    """Discovers active BTC 5m markets and tracks their lifecycle."""
+    """Discovers active BTC up/down markets and tracks their lifecycle."""
 
     def __init__(
         self,
         client: PolymarketApiClient,
         grace_period_seconds: float = 120.0,
         poll_interval_seconds: float = 30.0,
+        timeframes: tuple[str, ...] = LEGACY_5M_TIMEFRAMES,
     ) -> None:
         self._client = client
         self._grace_period_seconds = grace_period_seconds
         self.poll_interval_seconds = poll_interval_seconds
+        self._timeframes = normalize_timeframes(timeframes)
         self._active: dict[str, ActiveMarket] = {}  # slug -> market
         self._token_index: dict[str, str] = {}  # token_id -> slug
         self._lock = threading.RLock()
@@ -77,6 +80,17 @@ class MarketTracker:
             outcome = market.token_to_outcome.get(token_id, "")
             return slug, outcome
 
+    def resolve_token_market(self, token_id: str) -> tuple[ActiveMarket, str] | None:
+        """Return (market, outcome) for token_id, or None."""
+        with self._lock:
+            slug = self._token_index.get(token_id)
+            if slug is None:
+                return None
+            market = self._active.get(slug)
+            if market is None:
+                return None
+            return market, market.token_to_outcome.get(token_id, "")
+
     def get_all_token_ids(self) -> list[str]:
         """Return all currently tracked token IDs."""
         with self._lock:
@@ -95,7 +109,7 @@ class MarketTracker:
     # ------------------------------------------------------------------
 
     def _fetch_active_markets(self) -> list[dict[str, Any]]:
-        """Fetch open BTC 5m markets from Gamma API."""
+        """Fetch open BTC up/down markets from Gamma API."""
         all_markets: list[dict[str, Any]] = []
         offset = 0
         while True:
@@ -118,7 +132,7 @@ class MarketTracker:
                 break
 
             for market in page:
-                if self._is_btc_5m(market):
+                if self._is_target_market(market):
                     all_markets.append(market)
 
             if len(page) < 500:
@@ -127,15 +141,10 @@ class MarketTracker:
 
         return all_markets
 
-    def _is_btc_5m(self, market: dict[str, Any]) -> bool:
-        events = market.get("events", [])
-        if not any(
-            isinstance(e, dict) and e.get("seriesSlug") == SERIES_SLUG
-            for e in events
-        ):
+    def _is_target_market(self, market: dict[str, Any]) -> bool:
+        if not isinstance(market, dict):
             return False
-        slug = str(market.get("slug") or "")
-        return MARKET_SLUG_PATTERN.match(slug) is not None
+        return match_btc_updown_market(market, self._timeframes) is not None
 
     def _process_new(self, discovered: list[dict[str, Any]]) -> list[ActiveMarket]:
         added: list[ActiveMarket] = []
@@ -146,9 +155,16 @@ class MarketTracker:
                 if slug in self._active:
                     continue
 
+                timeframe_match = match_btc_updown_market(raw, self._timeframes)
+                if timeframe_match is None:
+                    continue
+                timeframe, window_start_ts = timeframe_match
+
                 condition_id = str(raw.get("conditionId") or "")
                 clob_token_ids_str = str(raw.get("clobTokenIds") or "")
                 outcomes_str = str(raw.get("outcomes") or "")
+                events = [e for e in raw.get("events", []) if isinstance(e, dict)]
+                event_id = str(events[0].get("id") or "") if events else ""
 
                 try:
                     token_ids = json.loads(clob_token_ids_str)
@@ -172,6 +188,9 @@ class MarketTracker:
 
                 market = ActiveMarket(
                     slug=slug,
+                    timeframe=timeframe,
+                    event_id=event_id,
+                    window_start_ts=window_start_ts,
                     condition_id=condition_id,
                     token_ids=token_ids,
                     outcomes=outcomes,

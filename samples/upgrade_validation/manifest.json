@@ -1,0 +1,15 @@
+{
+  "purpose": "Validation sample set for stream mode + millisecond timestamp upgrade",
+  "files": {
+    "batch_trades_no_rpc.csv": "Batch mode without --rpc-url; timestamp_ms/server_received_ms/trade_time_ms are empty.",
+    "batch_trades_with_rpc.csv": "Batch mode with --rpc-url; timestamp_ms populated from block_ts*1000+log_index, server_received_ms empty.",
+    "stream_trades_live.csv": "Realtime stream mode; timestamp_ms and server_received_ms both populated.",
+    "stream_ws_push.jsonl": "Local websocket payload sample (one JSON row per push)."
+  },
+  "log_index_expectation": {
+    "0x3333333333333333333333333333333333333333333333333333333333333333": 47,
+    "0x4444444444444444444444444444444444444444444444444444444444444444": 12,
+    "0x5555555555555555555555555555555555555555555555555555555555555555_up": 5,
+    "0x5555555555555555555555555555555555555555555555555555555555555555_down": 8
+  }
+}
