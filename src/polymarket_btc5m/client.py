@@ -9,6 +9,7 @@ from urllib3.util.retry import Retry
 
 GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 DATA_BASE_URL = "https://data-api.polymarket.com"
+CLOB_BASE_URL = "https://clob.polymarket.com"
 CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 
@@ -44,6 +45,20 @@ class PolymarketApiClient:
 
     def get_data(self, path: str, params: dict[str, Any]) -> Any:
         return self._get_json(f"{DATA_BASE_URL}{path}", params=params)
+
+    def get_clob_book(self, token_id: str) -> dict[str, Any] | None:
+        response = self.session.get(
+            f"{CLOB_BASE_URL}/book",
+            params={"token_id": token_id},
+            timeout=self.timeout_seconds,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        payload = json.loads(response.text, strict=False)
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Unexpected /book response type for token_id={token_id}: {type(payload)}")
+        return payload
 
     def _get_json(self, url: str, params: dict[str, Any]) -> Any:
         response = self.session.get(url, params=params, timeout=self.timeout_seconds)

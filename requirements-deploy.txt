@@ -1,0 +1,7 @@
+-r requirements.txt
+cos-python-sdk-v5
+pyarrow
+fastapi
+uvicorn
+httpx
+eval_type_backport

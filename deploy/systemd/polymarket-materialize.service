@@ -1,0 +1,18 @@
+[Unit]
+Description=Polymarket raw/curated materializer
+After=network-online.target polymarket-orderbook-recorder.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/polymarket-agent/current
+Environment=PYTHONUNBUFFERED=1
+Environment=POLYMARKET_ENV_FILE=/etc/polymarket-agent.env
+ExecStart=/opt/polymarket-agent/current/deploy/run_materialize.sh
+Restart=always
+RestartSec=15
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

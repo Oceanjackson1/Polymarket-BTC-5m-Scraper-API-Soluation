@@ -100,6 +100,10 @@ class MarketTracker:
         with self._lock:
             return self._active.get(slug)
 
+    def get_active_markets(self) -> list[ActiveMarket]:
+        with self._lock:
+            return list(self._active.values())
+
     def active_count(self) -> int:
         with self._lock:
             return len(self._active)

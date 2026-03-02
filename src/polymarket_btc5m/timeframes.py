@@ -83,6 +83,16 @@ def match_btc_updown_market(
     return slug_tf, window_start_ts
 
 
+def parse_market_slug(slug: str) -> tuple[str, int] | None:
+    match = _MARKET_SLUG_PATTERN.match(str(slug or "").strip().lower())
+    if match is None:
+        return None
+    timeframe = normalize_timeframe(match.group(1))
+    if timeframe is None:
+        return None
+    return timeframe, int(match.group(2))
+
+
 def timeframe_file_suffix(enabled_timeframes: tuple[str, ...]) -> str:
     ordered = tuple(tf for tf in SUPPORTED_TIMEFRAMES if tf in set(enabled_timeframes))
     if ordered == ("5m",):

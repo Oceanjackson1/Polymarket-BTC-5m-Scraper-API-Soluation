@@ -1,0 +1,19 @@
+[Unit]
+Description=Polymarket order book recorder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/polymarket-agent/current
+Environment=PYTHONUNBUFFERED=1
+Environment=POLYMARKET_ENV_FILE=/etc/polymarket-agent.env
+LimitNOFILE=65535
+ExecStart=/opt/polymarket-agent/current/deploy/run_orderbook_recorder.sh
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
